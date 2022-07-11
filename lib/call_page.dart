@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
@@ -20,10 +21,13 @@ class _CallPageState extends State<CallPage> {
 
   int? _remoteUid;
   int _myUid = Random.secure().nextInt(4294967296);
-  late RtcChannel _channel;
-  final AgoraEngine _engine = AgoraEngine();
+  late final RtcEngine _engine;
 
   bool _joined = false;
+
+  late Timer _periodicConnectionState;
+
+  bool _myCameraState = false;
 
   @override
   void initState() {
@@ -33,18 +37,37 @@ class _CallPageState extends State<CallPage> {
 
   @override
   void dispose() {
-    _channel.leaveChannel();
-    _engine.value.stopPreview();
+    _periodicConnectionState.cancel();
+    _engine.stopPreview();
+    _engine.leaveChannel();
     super.dispose();
   }
 
   Future<void> _initAgora() async {
-    await _engine.init();
+    _engine = await RtcEngine.createWithContext(
+        RtcEngineContext("appid"));
+    await _engine.startPreview();
 
-    await _engine.value.startPreview();
+    await _engine.enableVideo();
+    await _engine.disableAudio();
 
-    _channel = await RtcChannel.create(channelId);
-    _channel.setEventHandler(RtcChannelEventHandler(
+
+    _periodicConnectionState = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _engine.getConnectionState().then((value) {
+        print(value.name);
+      });
+    });
+
+    _setEventHandler();
+    await _engine.joinChannel(
+        "token",
+        channelId,
+        null,
+        _myUid);
+  }
+
+  void _setEventHandler() {
+    _engine.setEventHandler(RtcEngineEventHandler(
       joinChannelSuccess: (String channel, int uid, int elapsed) {
         _joined = true;
         setState(() {});
@@ -55,6 +78,12 @@ class _CallPageState extends State<CallPage> {
       },
       leaveChannel: (RtcStats stats) {
         print(stats.toJson());
+      },
+      remoteVideoStateChanged: (int uid, VideoRemoteState state,
+          VideoRemoteStateReason reason, int elapsed) {
+        print(uid);
+        print(state.name);
+        print(reason.name);
       },
       userOffline: (int uid, UserOfflineReason reason) {
         if (uid == _remoteUid) {
@@ -69,11 +98,6 @@ class _CallPageState extends State<CallPage> {
         print(e);
       },
     ));
-    await _channel.joinChannel(
-        "token",
-        '',
-        _myUid,
-        ChannelMediaOptions());
   }
 
   @override
@@ -112,14 +136,22 @@ class _CallPageState extends State<CallPage> {
               ],
             ),
           ),
-          const Padding(
-            padding: EdgeInsets.all(8.0),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
             child: Align(
               alignment: Alignment.topRight,
-              child: SizedBox(
-                width: 120,
-                height: (16 / 9) * 120,
-                child: rtc_local_view.SurfaceView(channelId: channelId),
+              child: Column(
+                children: [
+                  const SizedBox(
+                    width: 120,
+                    height: (16 / 9) * 120,
+                    child: rtc_local_view.SurfaceView(channelId: channelId),
+                  ),
+                  ElevatedButton(onPressed: () {
+                    _myCameraState = !_myCameraState;
+                    _engine.muteLocalVideoStream(_myCameraState);
+                  }, child: Text("Switch Camera"))
+                ],
               ),
             ),
           )
